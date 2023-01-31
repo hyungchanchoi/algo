@@ -3,6 +3,7 @@ from PyQt5.QtCore import *
 from PyQt5.QtTest import *
 
 from config.errorCode import *
+from config.kiwoomType import *
 import pandas as pd
 import matplotlib.pyplot as plt 
 from datetime import datetime
@@ -13,6 +14,8 @@ class Kiwoom(QAxWidget):
         
         print('kiwoom 클래스')
         
+        self.realType = RealType()
+        
         ###eventloop
         self.login_event_loop = QEventLoop()  #None
         self.detail_account_info_event_loop = QEventLoop()
@@ -20,11 +23,16 @@ class Kiwoom(QAxWidget):
         ######################
         
         ###스크린 번호 모음
+        self.screen_start_stop_real = '1000'
         self.screen_my_info = '2000'
         self.screen_calculation_stock = '4000'
+        self.screen_real_stock = '5000'
+        self.screen_meme_stock = '6000'
+        ######################
         
         ###변수모음
         self.account_num = None
+        self.account_stock_dict = {}
         ######################
         
         ###계좌 관련 변수
@@ -32,18 +40,35 @@ class Kiwoom(QAxWidget):
         self.use__money_percent = 1
         ######################
         
-        ###변수모음
-        self.account_stock_dict = {}
+        ###종목 정보 가져오기
+        self.portfolio_stock_dict = {'122630':{'종목명' : 'KODEX 레버리지'}, 
+                                     '252670':{'종목명' : 'KODEX 200선물인버스2X}'}}
+        self.jango_dict = {}
+        ######################
 
+        ###함수 모음
         self.get_ocx_instence()
         self.event_slots()
+        self.real_event_slots()
         
         self.signal_login_commConnect()
         self.get_account_info()
         self.detail_account_info()
         self.detail_account_mystock()
         self.not_concluded_account()
-        self.day_kiwoom_db()
+        
+        # self.day_kiwoom_db() 
+        
+        # self.screen_number_setting()
+        
+        self.dynamicCall('SetRealReg(Qstring,Qstring,Qstring,Qstring)',self.screen_start_stop_real, '', self.realType.REALTYPE['장시작시간']['장운영구분'], '0' )
+        
+        for code in self.portfolio_stock_dict.keys():
+            screen_num = self.portfolio_stock_dict[code]['스크린번호']
+            fids = self.realType.REALTYPE['주식체결']['체결시간']
+            self.dynamicCall('SetRealReg(Qstring,Qstring,Qstring,Qstring)',self.screen_num, code, fids, '1' )
+            print('실시간 등록 코드: %s, 스크린번호: %s, fid번호: %s' % (code, screen_num,  fids))             
+        
         
     def get_ocx_instence(self):
         self.setControl('KHOPENAPI.KHOpenAPICtrl.1')
@@ -56,6 +81,9 @@ class Kiwoom(QAxWidget):
         print(errCode)
         print(errors(errCode))
         self.login_event_loop.exit()
+        
+    def real_event_slots(self):
+        self.OnReceiveRealData
         
     def signal_login_commConnect(self): 
         self.dynamicCall('CommConnect()')
@@ -97,7 +125,80 @@ class Kiwoom(QAxWidget):
         
         self.detail_account_info_event_loop.exec_()
         
+    def day_kiwoom_db(self, code=None, date=None, sPrevNext='0'):
+            
+        # QTest.qWait(3600) 
     
+        self.dynamicCall("SetInputValue(QString, QString)", "종목코드", '122630')
+        self.dynamicCall("SetInputValue(QString, QString)", "틱범위", '1')
+        self.dynamicCall("SetInputValue(QString, QString)", "수정주가구분", "1")
+
+        if date != None:
+            self.dynamicCall("SetInputValue(QString, QString)", "기준일자", date)
+
+        self.dynamicCall("CommRqData(QString, QString, int, QString)", "주식분봉차트조회요청", "opt10080", sPrevNext, self.screen_calculation_stock)
+
+        self.calculator_event_loop.exec_() 
+        
+    def screen_number_setting(self):
+        screen_overwrite = []
+        
+        #계좌평가잔고내역에 있는 종목들
+        for code in self.account_stock_dict.keys():
+            if code not in screen_overwrite:
+                screen_overwrite.append(code)
+                
+        #미체결에 있는 종목들
+        for order_number in self.not_concluded_account_dict.keys():
+            code = self.not_concluded_account[order_number]['종목코드']
+            
+            if code not in screen_overwrite:
+                screen_overwrite.append(code)
+                
+        #포트폴이오에 담겨있는 종목들
+        # for code in self.por
+        
+        cnt = 0
+        for code in screen_overwrite:
+            
+            temp_screen = int(self.screen_real_stock)
+            meme_screen = int(self.screen_meme_stock)
+            
+            if cnt % 50 == 0:
+                temp_screen += 1
+                self.screen_real_stock = str(temp_screen)
+                
+            if cnt % 50 == 0:
+                meme_screen += 1
+                self.screen_meme_stock = str(meme_screen)
+                
+            if code in self.portfolio_stock_dict.keys():
+                self.portfolio_stock_dict[code].update({'스크린번호': str(self.screen_real_stock)})
+                self.portfolio_stock_dict[code].update({'주문용스크린번호': str(self.screen_meme_stock)})
+                
+            elif code not in self.portfolio_stock_dict.keys():
+                self.portfolio_stock_dict[code].update({code :{'스크린번호': str(self.screen_real_stock),'주문용스크린번호': str(self.screen_meme_stock)}})
+                
+            cnt += 1 
+            
+    def realdata_slot(self, sCode, sRealType, sRealData):
+        
+        if sRealType == '장시작시간':
+            fid = self.realType.REALTYPE[sRealType]['장운영구분']
+            value = self.dynamicCall('GetCommData(Qstring, int)', sCode, fid)
+            
+            if value == '0':
+                print('장 시작 전')
+            elif value == '3':
+                print('장 시작')
+            elif value == "2":
+                print('장 종료, 동시호가로 넘어감')
+            elif value == "4":
+                print('3시30분 장 종료') 
+        
+        elif sRealType == '주식체결':
+            print(sCode)
+                                 
     def trdata_slot(self, sScrNo, sRQName, sTrCode, sRecordName,sPrevNext) :
         
         if sRQName == '예수금상세현황요청':
@@ -279,23 +380,5 @@ class Kiwoom(QAxWidget):
             # if sPrevNext == '2':
             #     self.day_kiwoom_db(code = '122630', sPrevNext=sPrevNext)
             # else:
-            #     self.calculator_event_loop.exit()
-            
-                      
-    def calculator_fnc(self):
-        pass #임시        
-            
-    def day_kiwoom_db(self, code=None, date=None, sPrevNext='0'):
-        
-        # QTest.qWait(3600) 
-    
-        self.dynamicCall("SetInputValue(QString, QString)", "종목코드", '122630')
-        self.dynamicCall("SetInputValue(QString, QString)", "틱범위", '1')
-        self.dynamicCall("SetInputValue(QString, QString)", "수정주가구분", "1")
-
-        if date != None:
-            self.dynamicCall("SetInputValue(QString, QString)", "기준일자", date)
-
-        self.dynamicCall("CommRqData(QString, QString, int, QString)", "주식분봉차트조회요청", "opt10080", sPrevNext, self.screen_calculation_stock)
-
-        self.calculator_event_loop.exec_()
+            self.calculator_event_loop.exit()
+                   
