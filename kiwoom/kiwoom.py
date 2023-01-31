@@ -1,7 +1,11 @@
 from PyQt5.QAxContainer import * 
 from PyQt5.QtCore import *
-from config.errorCode import *
+from PyQt5.QtTest import *
 
+from config.errorCode import *
+import pandas as pd
+import matplotlib.pyplot as plt 
+from datetime import datetime
 
 class Kiwoom(QAxWidget):
     def __init__(self) :
@@ -12,6 +16,7 @@ class Kiwoom(QAxWidget):
         ###eventloop
         self.login_event_loop = QEventLoop()  #None
         self.detail_account_info_event_loop = QEventLoop()
+        self.calculator_event_loop = QEventLoop()
         ######################
         
         ###스크린 번호 모음
@@ -38,6 +43,7 @@ class Kiwoom(QAxWidget):
         self.detail_account_info()
         self.detail_account_mystock()
         self.not_concluded_account()
+        self.day_kiwoom_db()
         
     def get_ocx_instence(self):
         self.setControl('KHOPENAPI.KHOpenAPICtrl.1')
@@ -199,13 +205,97 @@ class Kiwoom(QAxWidget):
                 self.not_account_stock_dict[order_no].update({'체결량': ok_quantity})
                 
             self.detail_account_info_event_loop.exit()
+             
+        if sRQName == '주식분봉차트조회요청':
+            print('분몽데이터 요청')
+            min_price = self.dynamicCall('GetCommData(QString, QString,int,Qstring)', sTrCode, sRQName, 0,'현재가')
+            min_price = min_price.strip()
+            min_time = self.dynamicCall('GetCommData(QString, QString,int,Qstring)', sTrCode, sRQName, 0,'체결시간')
+            min_time = min_time.strip()
+
+            cnt = self.dynamicCall("GetRepeatCnt(QString, QString)", sTrCode, sRQName)
+            
+            min_price_list = []
+            min_high_list = []
+            min_low_list = []
+            min_time_list = []
+            
+            now = datetime.now().date()
+            print(now)
+            
+            for i in range(cnt):
+                
+                min_time = self.dynamicCall("GetCommData(QString, QString, int, QString)", sTrCode, sRQName, i, "체결시간") 
+                min_price = self.dynamicCall("GetCommData(QString, QString, int, QString)", sTrCode, sRQName, i, "현재가")  
+                min_high = self.dynamicCall("GetCommData(QString, QString, int, QString)", sTrCode, sRQName, i, "고가") 
+                min_low = self.dynamicCall("GetCommData(QString, QString, int, QString)", sTrCode, sRQName, i, "저가") 
+                
+                min_time = min_time.strip()
+                y = min_time[0:4]
+                m = min_time[4:6]
+                d = min_time[6:8]
+                h = min_time[8:10]
+                m_ = min_time[10:12]
+                min_time = y + '-' + m + '-' + d + " " + h + ':' + m_ 
+                min_time = datetime.strptime(min_time, '%Y-%m-%d %H:%M')
+
+                min_price_list.append(int(min_price))
+                min_high_list.append(int(min_high))
+                min_low_list.append(int(min_low))
+                min_time_list.append(min_time)
+
+            #가끔 가다 음수가 나와서 절대값으로 바꿔주는 코드
+            min_price_list = list(map(abs,min_price_list))
+            min_high_list = list(map(abs,min_high_list))
+            min_low_list = list(map(abs,min_low_list))
+                                    
+            data = {
+                'time' : min_time_list,
+                'price' :  min_price_list,
+                'high' : min_high_list,
+                'low' : min_low_list }
+                        
+            df = pd.DataFrame(data)
+            # df.index = min_time_list
+            df = df.sort_index(ascending=False)
+
+            df['M'] = (df['price'] + df['high'] + df['low']) / 3  #https://dipsy-encyclopedia.tistory.com/62
+            df['m'] = df['M'].rolling(window=100).mean()
+            df = df[-500:]
+            df['d'] = (df['M'] - df['m']).abs()
+            df['d'] = df['d'].rolling(window=100).mean()
+            df = df[-400:]
+            df['cci'] = (df['M'] - df['m']) / (0.015 * df['d'])
+            
+            print(df)
+            
+            ###cci 그래프 그리는 코드
+            # plt.figure(figsize=(25,10))
+            # df['cci'].plot()
+            # plt.show()
+            # df.to_excel('df.xlsx')
+                        
+            ###반복조회 할 때 사용하느 코드, 아마 백테스트 할 때 사용할 듯
+            # if sPrevNext == '2':
+            #     self.day_kiwoom_db(code = '122630', sPrevNext=sPrevNext)
+            # else:
+            #     self.calculator_event_loop.exit()
+            
+                      
+    def calculator_fnc(self):
+        pass #임시        
             
     def day_kiwoom_db(self, code=None, date=None, sPrevNext='0'):
+        
+        # QTest.qWait(3600) 
     
-        self.dynamicCall("SetInputValue(QString, QString)", "종목코드", code)
+        self.dynamicCall("SetInputValue(QString, QString)", "종목코드", '122630')
+        self.dynamicCall("SetInputValue(QString, QString)", "틱범위", '1')
         self.dynamicCall("SetInputValue(QString, QString)", "수정주가구분", "1")
 
         if date != None:
             self.dynamicCall("SetInputValue(QString, QString)", "기준일자", date)
 
-        self.dynamicCall("CommRqData(QString, QString, int, QString)", "주식일봉차트조회", "opt10081", sPrevNext, self.screen_calculation_stock)
+        self.dynamicCall("CommRqData(QString, QString, int, QString)", "주식분봉차트조회요청", "opt10080", sPrevNext, self.screen_calculation_stock)
+
+        self.calculator_event_loop.exec_()
