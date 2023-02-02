@@ -2,7 +2,7 @@ from ui.ui import Ui_class
 
 class Main():
     def __init__(self):
-        print('실행할 매인 클래스')
+        print('main class')
         
         Ui_class()
         
