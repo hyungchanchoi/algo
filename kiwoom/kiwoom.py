@@ -56,19 +56,41 @@ class Kiwoom(QAxWidget):
         self.get_account_info()
         self.detail_account_info()
         self.detail_account_mystock()
-        self.not_concluded_account()
-        
-        self.day_kiwoom_db() 
+        self.not_concluded_account()        
         
         self.screen_number_setting()
         
         self.dynamicCall('SetRealReg(Qstring,Qstring,Qstring,Qstring)',self.screen_start_stop_real, '', self.realType.REALTYPE['장시작시간']['장운영구분'], '0' )
+    
         
         for code in self.portfolio_stock_dict.keys():
             screen_num = self.portfolio_stock_dict[code]['스크린번호']
             fids = self.realType.REALTYPE['주식체결']['체결시간']
-            self.dynamicCall('SetRealReg(Qstring,Qstring,Qstring,Qstring)',screen_num, code, fids, '1' )
-            print('실시간 등록 코드: %s, 스크린번호: %s, fid번호: %s' % (code, screen_num,  fids))             
+            bid = self.realType.REALTYPE['주식체결']['(최우선)매수호가']
+            
+            self.dynamicCall('SetRealReg(Qstring,Qstring,Qstring,Qstring)',screen_num, code, fids, '1' )            
+            self.dynamicCall('SetRealReg(Qstring,Qstring,Qstring,Qstring)',screen_num, code, bid, '1' )
+            
+            print('실시간 등록 코드: %s, 스크린번호: %s' % (code, screen_num))         
+            
+            
+        now = datetime.now()
+        current_time = now.strftime("%H%M%S")
+        
+        #3.6초로 tr요청 방식으로 주문
+        while int(current_time) >= 153000:
+            
+            now = datetime.now()    
+            current_time = now.strftime("%H%M%S")
+            print(current_time)
+            
+            self.get_cci_data() 
+                        
+            QTest.qWait(3600)
+
+
+
+            
         
         
     def get_ocx_instence(self):
@@ -127,20 +149,22 @@ class Kiwoom(QAxWidget):
         
         self.detail_account_info_event_loop.exec_()
         
-    def day_kiwoom_db(self, code=None, date=None, sPrevNext='0'):
+    def get_cci_data(self, code=None, date=None, sPrevNext='0'):
             
-        # QTest.qWait(3600) 
+        for code in self.portfolio_stock_dict.keys():
     
-        self.dynamicCall("SetInputValue(QString, QString)", "종목코드", '122630')
-        self.dynamicCall("SetInputValue(QString, QString)", "틱범위", '1')
-        self.dynamicCall("SetInputValue(QString, QString)", "수정주가구분", "1")
+            self.code = code
+            self.code_name = self.portfolio_stock_dict[code]['종목명']
+            self.dynamicCall("SetInputValue(QString, QString)", "종목코드", code)
+            self.dynamicCall("SetInputValue(QString, QString)", "틱범위", '1')
+            self.dynamicCall("SetInputValue(QString, QString)", "수정주가구분", "1")
 
-        if date != None:
-            self.dynamicCall("SetInputValue(QString, QString)", "기준일자", date)
+            if date != None:
+                self.dynamicCall("SetInputValue(QString, QString)", "기준일자", date)
 
-        self.dynamicCall("CommRqData(QString, QString, int, QString)", "주식분봉차트조회요청", "opt10080", sPrevNext, self.screen_calculation_stock)
+            self.dynamicCall("CommRqData(QString, QString, int, QString)", "주식분봉차트조회요청", "opt10080", sPrevNext, self.screen_calculation_stock)
 
-        self.calculator_event_loop.exec_() 
+            self.calculator_event_loop.exec_() 
         
     def screen_number_setting(self):
         screen_overwrite = []
@@ -184,12 +208,13 @@ class Kiwoom(QAxWidget):
             cnt += 1 
         print(self.portfolio_stock_dict)
         
+        
     def realdata_slot(self, sCode, sRealType, sRealData):
         
         if sRealType == '장시작시간':
             fid = self.realType.REALTYPE[sRealType]['장운영구분']
-            value = self.dynamicCall('GetCommData(Qstring, int)', sCode, fid)
-            
+            value = self.dynamicCall('GetCommRealData(Qstring, int)', sCode, fid)
+            print(123,value)
             if value == '0':
                 print('장 시작 전')
             elif value == '3':
@@ -198,6 +223,14 @@ class Kiwoom(QAxWidget):
                 print('장 종료, 동시호가로 넘어감')
             elif value == "4":
                 print('3시30분 장 종료') 
+                
+                
+        if sRealType == '주식체결':
+            fid = self.realType.REALTYPE[sRealType]['(최우선)매수호가']
+            time = self.dynamicCall('GetCommRealData(Qstring, int)', sCode, 20)
+            self.bid = self.dynamicCall('GetCommRealData(Qstring, int)', sCode, fid)
+            
+
         
         elif sRealType == '주식체결':
             a = self.dynamicCall('GetCommRealData(Qstring, int)', sCode, self.realType.REALTYPE[sRealType]['체결시간'])
@@ -512,7 +545,8 @@ class Kiwoom(QAxWidget):
             self.detail_account_info_event_loop.exit()
              
         if sRQName == '주식분봉차트조회요청':
-            print('***분봉데이터 요청***')
+            
+            code_name = self.code_name
             min_price = self.dynamicCall('GetCommData(QString, QString,int,Qstring)', sTrCode, sRQName, 0,'현재가')
             min_price = min_price.strip()
             min_time = self.dynamicCall('GetCommData(QString, QString,int,Qstring)', sTrCode, sRQName, 0,'체결시간')
@@ -526,7 +560,6 @@ class Kiwoom(QAxWidget):
             min_time_list = []
             
             now = datetime.now().date()
-            print(now)
             
             for i in range(cnt):
                 
@@ -571,8 +604,15 @@ class Kiwoom(QAxWidget):
             df['d'] = df['d'].rolling(window=100).mean()
             df = df[-400:]
             df['cci'] = (df['M'] - df['m']) / (0.015 * df['d'])
+            cci = float(df['cci'].iloc[-1:])
+            cci = round(cci,2)
+            self.portfolio_stock_dict[self.code].update({'CCI' : cci})
             
-            print(df)
+            #어떻게 cci값이 순간적으로 상승한 것이 아니라 상승추세에 있는 것으로 계산할 것인가?
+            if cci <= -150 :
+                
+            
+            print(code_name,':',cci)
             
             ###cci 그래프 그리는 코드
             # plt.figure(figsize=(25,10))
