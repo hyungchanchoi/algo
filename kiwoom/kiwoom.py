@@ -80,6 +80,8 @@ class Kiwoom(QAxWidget):
         
         self.screen_number_setting()
         
+        self.get_min_data() 
+        
         #self.get_condition()  조건검색식 이용
         
         
@@ -97,12 +99,12 @@ class Kiwoom(QAxWidget):
             print('실시간 등록 코드: %s, 스크린번호: %s' % (code, screen_num))   
             
         
-        ###직접 cci를 계산해서 트레이딩 할 때###             
-        # now = datetime.now()
-        # current_time = now.strftime("%H%M%S")
+        ###직접 cci를 계산해서 트레이딩 할 때###                 
+        now = datetime.now()
+        current_time = now.strftime("%H%M%S")
         
-        # #3.6초로 tr요청 방식으로 주문
-        # while int(current_time) >= 153000:
+        #tr요청  
+        # while int(current_time) <= 153000:
             
         #     now = datetime.now()    
         #     current_min = now.strftime("%H%M%S.%f")
@@ -110,7 +112,7 @@ class Kiwoom(QAxWidget):
             
         #     if current_min < 0.001: 
                 
-        #         self.get_cci_data() 
+        #         self.get_min_data() 
                
         #     current_time = now.strftime("%H%M%S")
         ############################################
@@ -200,7 +202,7 @@ class Kiwoom(QAxWidget):
         self.detail_account_info_event_loop.exit()
         
         
-    def get_cci_data(self, code=None, date=None, sPrevNext='0'):
+    def get_min_data(self, code=None, date=None, sPrevNext='0'):
             
         for code in self.portfolio_stock_dict.keys():
     
@@ -258,7 +260,26 @@ class Kiwoom(QAxWidget):
                 
             cnt += 1 
         print(self.portfolio_stock_dict)
+        
     
+    def calculate_cci(self,sCode):
+        
+        M = self.portfolio_stock_dict[sCode]['M']
+        M[900] = self.portfolio_stock_dict[sCode]['bid']
+        m = M.rolling(window=100).mean()
+        M = M.iloc[-300:]
+        m = m.iloc[-300:]
+        d = (M - m).abs()
+        d = d.rolling(window=100).mean()
+        d = d.iloc[-100:]
+        cci = (M - m) / (0.015 * d)
+        
+        price = int(M.iloc[-1:]).to_string()
+        cci = float(cci.iloc[-1:])
+        cci = round(cci,2)
+        self.portfolio_stock_dict[sCode].update({'CCI' : cci})
+        msg = self.portfolio_stock_dict[sCode]['종목명'] + ':' + price + ' / cci :'+ str(cci)
+        self.logger.debug(msg)
         
     
     def trdata_slot(self, sScrNo, sRQName, sTrCode, sRecordName,sPrevNext) :
@@ -414,28 +435,16 @@ class Kiwoom(QAxWidget):
                         
             df = pd.DataFrame(data)
             df = df.sort_index(ascending=False)
+            df['index'] = list(range(0,900))
+            df.set_index('index', drop=True, inplace=True)
+                       
+            M = (df['price'] + df['high'] + df['low']) / 3  #https://dipsy-encyclopedia.tistory.com/62
+            self.portfolio_stock_dict[self.code].update({'M' : M})
             
+            print(self.portfolio_stock_dict[self.code]['M'])
             
-            df['M'] = (df['price'] + df['high'] + df['low']) / 3  #https://dipsy-encyclopedia.tistory.com/62
-            df['m'] = df['M'].rolling(window=100).mean()
-            df = df[-300:]
-            df['d'] = (df['M'] - df['m']).abs()
-            df['d'] = df['d'].rolling(window=100).mean()
-            df = df[-100:]
-            df['cci'] = (df['M'] - df['m']) / (0.015 * df['d'])
-            df['temp'] = list(range(0,100))
-            df.set_index('temp', drop=True, inplace=True)
-              
-            self.portfolio_stock_dict[self.code].update({'100_min' : df['price']})
-            
-            price = df['price'].iloc[-1:].to_string()
-            price = price[-5:]
-            cci = float(df['cci'].iloc[-1:])
-            cci = round(cci,2)
-            self.portfolio_stock_dict[self.code].update({'CCI' : cci})
-            msg = code_name + ':' + price + ' / cci :'+ str(cci)
-            self.logger.debug(msg)
-            
+            self.calculator_event_loop.exit()
+           
             #어떻게 cci값이 순간적으로 상승한 것이 아니라 상승추세에 있는 것으로 계산할 것인가?
             # if cci <= -150 :
             #     now = datetime.now()
@@ -464,6 +473,7 @@ class Kiwoom(QAxWidget):
             #     self.day_kiwoom_db(code = '122630', sPrevNext=sPrevNext)
             # else:
             self.calculator_event_loop.exit()
+            
                 
     def realdata_slot(self, sCode, sRealType, sRealData):
         
@@ -485,6 +495,8 @@ class Kiwoom(QAxWidget):
             time = self.dynamicCall('GetCommRealData(Qstring, int)', sCode, 20)
             bid = abs(int(self.dynamicCall('GetCommRealData(Qstring, int)', sCode, fid)))
             self.portfolio_stock_dict[sCode].update({'bid' : bid})
+
+            self.calculate_cci(sCode)
             
 
         
