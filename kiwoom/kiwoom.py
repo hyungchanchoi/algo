@@ -83,10 +83,14 @@ class Kiwoom(QAxWidget):
         self.get_min_data() 
         
         #self.get_condition()  조건검색식 이용
-        
-        
+               
         self.dynamicCall('SetRealReg(Qstring,Qstring,Qstring,Qstring)',self.screen_start_stop_real, '', self.realType.REALTYPE['장시작시간']['장운영구분'], '0' )
     
+        now = datetime.now()
+        current_time = now.strftime("%H%M%S")
+        
+        for code in self.portfolio_stock_dict.keys():        
+            self.portfolio_stock_dict[code].update({'감시':'끝'})
         
         for code in self.portfolio_stock_dict.keys():
             screen_num = self.portfolio_stock_dict[code]['스크린번호']
@@ -96,25 +100,23 @@ class Kiwoom(QAxWidget):
             self.dynamicCall('SetRealReg(Qstring,Qstring,Qstring,Qstring)',screen_num, code, fids, '1' )            
             self.dynamicCall('SetRealReg(Qstring,Qstring,Qstring,Qstring)',screen_num, code, bid, '1' )
             
-            print('실시간 등록 코드: %s, 스크린번호: %s' % (code, screen_num))   
+            print(self.portfolio_stock_dict)
             
         
         ###직접 cci를 계산해서 트레이딩 할 때###                 
-        now = datetime.now()
-        current_time = now.strftime("%H%M%S")
-        
+     
         #tr요청  
         # while int(current_time) <= 153000:
             
-        #     now = datetime.now()    
-        #     current_min = now.strftime("%H%M%S.%f")
-        #     current_min = float(current_min[-9:])
+            # now = datetime.now()    
+            # current_min = now.strftime("%H%M%S.%f")
+            # current_min = float(current_min[-9:])
             
-        #     if current_min < 0.001: 
+            # if current_min < 0.001: 
                 
-        #         self.get_min_data() 
+            #     self.get_min_data() 
                
-        #     current_time = now.strftime("%H%M%S")
+            # current_time = now.strftime("%H%M%S")
         ############################################
         
             
@@ -259,7 +261,6 @@ class Kiwoom(QAxWidget):
                 self.portfolio_stock_dict[code].update({code :{'스크린번호': str(self.screen_real_stock),'주문용스크린번호': str(self.screen_meme_stock)}})
                 
             cnt += 1 
-        print(self.portfolio_stock_dict)
         
     
     def calculate_cci(self,sCode):
@@ -267,21 +268,43 @@ class Kiwoom(QAxWidget):
         M = self.portfolio_stock_dict[sCode]['M']
         M[900] = self.portfolio_stock_dict[sCode]['bid']
         m = M.rolling(window=100).mean()
-        M = M.iloc[-300:]
-        m = m.iloc[-300:]
+        M = M.iloc[-200:]
+        m = m.iloc[-200:]
         d = (M - m).abs()
         d = d.rolling(window=100).mean()
+        M = M.iloc[-100:]
+        m = m.iloc[-100:]
         d = d.iloc[-100:]
         cci = (M - m) / (0.015 * d)
         
-        price = int(M.iloc[-1:]).to_string()
+        price = int(M.iloc[-1:].values[0])
         cci = float(cci.iloc[-1:])
         cci = round(cci,2)
         self.portfolio_stock_dict[sCode].update({'CCI' : cci})
-        msg = self.portfolio_stock_dict[sCode]['종목명'] + ':' + price + ' / cci :'+ str(cci)
-        self.logger.debug(msg)
+        msg = self.portfolio_stock_dict[sCode]['종목명'] + ':' + str(price) + ' / cci :'+ str(cci)
         
-    
+        if self.portfolio_stock_dict[sCode]['감시'] == '시작':
+            msg = msg + ' ----- 감시 시작시간-----' + str(self.portfolio_stock_dict[sCode]['CCI 포착시간'])
+        else:
+            self.logger.debug(msg)
+        
+        #어떻게 cci값이 순간적으로 상승한 것이 아니라 상승추세에 있는 것으로 계산할 것인가?
+        if cci <= -10 :
+            now = datetime.now()
+            self.portfolio_stock_dict[sCode].update({'CCI 포착시간' : now})
+            self.portfolio_stock_dict[sCode].update({'감시' : '시작'})                       
+            
+        if cci >= -10 and self.portfolio_stock_dict[sCode]['감시'] == '시작':
+            
+            now = datetime.now()
+            delta_time = now - self.portfolio_stock_dict[self.code]['CCI 포착시간']
+            delta_time = delta_time.total_seconds()  
+            
+            if delta_time>=60:
+                self.portfolio_stock_dict[sCode].update({'감시' : '끝'})     
+                print('신규매수')             
+
+            
     def trdata_slot(self, sScrNo, sRQName, sTrCode, sRecordName,sPrevNext) :
             
         if sRQName == '예수금상세현황요청':
@@ -441,27 +464,8 @@ class Kiwoom(QAxWidget):
             M = (df['price'] + df['high'] + df['low']) / 3  #https://dipsy-encyclopedia.tistory.com/62
             self.portfolio_stock_dict[self.code].update({'M' : M})
             
-            print(self.portfolio_stock_dict[self.code]['M'])
-            
             self.calculator_event_loop.exit()
-           
-            #어떻게 cci값이 순간적으로 상승한 것이 아니라 상승추세에 있는 것으로 계산할 것인가?
-            # if cci <= -150 :
-            #     now = datetime.now()
-            #     self.portfolio_stock_dict[self.code].update({'CCI 포착시간' : now})
-                            
-            #     print(code_name,':',cci,'/ ','첫 cci 포착시간 : ' ,self.portfolio_stock_dict[self.code]['CCI 포착시간'])
-                
-            # if cci >= -150 :
-                
-            #     now = datetime.now()
-            #     delta_time = now - self.portfolio_stock_dict[self.code]['CCI 포착시간']
-            #     delta_time = delta_time.total_seconds()  
-                
-            #     if delta_time <= 60:
-            #         print('신규매수') 
-                
-         
+                  
             ###cci 그래프 그리는 코드
             # plt.figure(figsize=(25,10))
             # df['cci'].plot()
@@ -472,7 +476,7 @@ class Kiwoom(QAxWidget):
             # if sPrevNext == '2':
             #     self.day_kiwoom_db(code = '122630', sPrevNext=sPrevNext)
             # else:
-            self.calculator_event_loop.exit()
+
             
                 
     def realdata_slot(self, sCode, sRealType, sRealData):
